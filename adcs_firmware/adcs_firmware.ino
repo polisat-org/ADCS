@@ -6,17 +6,14 @@
  */
 #include "config.h"
 #include "gyro_mpu9250.h"
+#include "escon.h"
 
 // Coloca todo pino que mexe em hardware externo num estado seguro: motor
 // desabilitado com comando zero, LDRs desligados.
+Escon escon;
+
 void pinosSeguros() {
-  pinMode(PIN_ESCON_ENABLE, OUTPUT);
-  digitalWrite(PIN_ESCON_ENABLE, LOW);
-  pinMode(PIN_ESCON_DIR, OUTPUT);
-  digitalWrite(PIN_ESCON_DIR, LOW);
-  pinMode(PIN_ESCON_PWM, OUTPUT);
-  analogWrite(PIN_ESCON_PWM, (255L * DUTY_MIN_PCT) / 100);
-  pinMode(PIN_ESCON_READY, INPUT_PULLUP);
+  escon.begin();
 
   pinMode(PIN_LDR_BANK_A, OUTPUT);
   digitalWrite(PIN_LDR_BANK_A, LOW);
