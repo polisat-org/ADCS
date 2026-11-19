@@ -4,16 +4,17 @@
  *   τ_roda = Kp · ω_corpo        [N·m]
  *   O corpo recebe −τ_roda, logo ω(t) = ω0 · exp(−Kp/I_b · t).
  *
- * SEMÂNTICA DO MODO
- *   Modo 2 (ativo): lê o giroscópio a 100 Hz e comanda a roda para levar e
- *   MANTER |ω| na faixa (≤ 5 rpm). Atingir a faixa não desliga o controle:
- *   sem ele, o atrito da roda devolve momento ao corpo e a rotação volta.
- *   Modo 1 (inativo): motor desabilitado; o giroscópio continua sendo lido
- *   para a telemetria de depuração.
+ * SEMÂNTICA
+ *   Ativo (comando 1 do OBC): lê o giroscópio a 100 Hz e comanda a roda para
+ *   levar e MANTER |ω| na faixa (≤ 5 rpm) até o comando 2. Não há timeout nem
+ *   aviso ao OBC: quem decide o fim é a prova. Atingir a faixa não desliga o
+ *   controle: sem ele, o atrito da roda devolve momento ao corpo.
+ *   Inativo: motor desabilitado; o giroscópio continua sendo lido para a
+ *   telemetria de depuração.
  *
- * SEGURANÇA (desliga o motor e volta ao modo 1)
- *   - faixa não atingida em MANEUVER_TIMEOUT_MS (sentido invertido, ESCON
- *     desabilitado, sensor desalinhado...)
+ * SEGURANÇA (desliga o motor e fica inativo)
+ *   - |ω| > OMEGA_ABORT por OVERSPEED_SAMPLES seguidas: o controle está
+ *     acelerando o corpo (sentido da roda ou do giroscópio invertido)
  *   - GYRO_MAX_FAILS leituras seguidas do giroscópio com falha
  *   - Ready do ESCON baixo (se ESCON_READY_CHECK)
  */
@@ -27,8 +28,8 @@ class Detumbling {
 public:
   void begin(GyroMPU9250 *g, Escon *e, bool sensorOk);
 
-  bool start();                                 // comando '2'
-  void stop(const __FlashStringHelper *motivo); // comando '1' ou segurança
+  bool start();                                 // comando 1
+  void stop(const __FlashStringHelper *motivo); // comando 2 ou segurança
 
   // Chamar a cada CONTROL_PERIOD_US. Lê o giroscópio e, se ativo, controla.
   void update();
@@ -53,6 +54,7 @@ private:
   float omegaFilt = 0.0f;
   float tauCmd = 0.0f;
   uint16_t amostrasNaFaixa = 0;
+  uint16_t amostrasSobrevel = 0;
   uint8_t falhasSeguidas = 0;
   uint32_t inicioMs = 0;
   uint32_t tFaixaMs = 0;

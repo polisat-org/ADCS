@@ -18,11 +18,12 @@ bool Detumbling::start() {
   ativo = true;
   atingiu = false;
   amostrasNaFaixa = 0;
+  amostrasSobrevel = 0;
   falhasSeguidas = 0;
   tFaixaMs = 0;
   inicioMs = millis();
   escon->enable();
-  Serial.println(F("# MODO 2: detumbling ATIVO"));
+  Serial.println(F("# detumbling ATIVO"));
   return true;
 }
 
@@ -32,7 +33,7 @@ void Detumbling::stop(const __FlashStringHelper *motivo) {
   bool estavaAtivo = ativo;
   ativo = false;
   if (estavaAtivo) {
-    Serial.print(F("# MODO 1: detumbling PARADO ("));
+    Serial.print(F("# detumbling PARADO ("));
     Serial.print(motivo);
     Serial.println(')');
   }
@@ -70,15 +71,22 @@ void Detumbling::update() {
       tFaixaMs = millis() - inicioMs;
       Serial.print(F("# faixa de 5 rpm atingida em "));
       Serial.print(tFaixaMs * 0.001f, 2);
-      Serial.println(F(" s (controle segue ativo ate o comando 1)"));
+      Serial.println(F(" s (controle segue ativo ate o comando 2)"));
     }
   } else {
     amostrasNaFaixa = 0;
   }
 
-  if (!atingiu && millis() - inicioMs > MANEUVER_TIMEOUT_MS) {
-    stop(F("TIMEOUT: verifique sentido da roda, Enable e eixo do giroscopio"));
-  } else if (escon->readyFault()) {
+  if (fabs(omegaFilt) > OMEGA_ABORT) {
+    if (++amostrasSobrevel >= OVERSPEED_SAMPLES) {
+      stop(F("SOBREVELOCIDADE: verifique INVERT_DIR e GYRO_Z_SIGN"));
+      return;
+    }
+  } else {
+    amostrasSobrevel = 0;
+  }
+
+  if (escon->readyFault()) {
     stop(F("ESCON sinalizou erro no Ready"));
   }
 }

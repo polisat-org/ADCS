@@ -3,7 +3,7 @@
  * Fala direto com os registradores pela Wire, sem biblioteca externa. Só o
  * eixo Z (eixo da roda) é usado pelo controle.
  *
- * Configuração: ±500 °/s (60 rpm = 360 °/s estoura a faixa de ±250 °/s),
+ * Configuração: ±1000 °/s (±167 rpm, folga acima do limite de sobrevelocidade),
  * DLPF de 41 Hz, amostragem interna de 100 Hz (casa com o loop de controle).
  */
 #pragma once

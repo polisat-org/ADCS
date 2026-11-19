@@ -12,7 +12,7 @@ static const uint8_t REG_PWR_MGMT_1   = 0x6B;
 static const uint8_t REG_PWR_MGMT_2   = 0x6C;
 static const uint8_t REG_WHO_AM_I     = 0x75;
 
-static const float GYRO_LSB_PER_DPS = 65.5f;   // ±500 °/s
+static const float GYRO_LSB_PER_DPS = 32.8f;   // ±1000 °/s
 static const float RAW_TO_RADS = (PI / 180.0f) / GYRO_LSB_PER_DPS;
 
 bool GyroMPU9250::writeReg(uint8_t reg, uint8_t val) {
@@ -51,7 +51,7 @@ bool GyroMPU9250::begin(uint8_t endereco) {
 
   if (!writeReg(REG_CONFIG, 0x03)) return false;        // DLPF 41 Hz, Fs interno 1 kHz
   if (!writeReg(REG_SMPLRT_DIV, 9)) return false;       // 1 kHz / (1+9) = 100 Hz
-  if (!writeReg(REG_GYRO_CONFIG, 0x08)) return false;   // ±500 °/s
+  if (!writeReg(REG_GYRO_CONFIG, 0x10)) return false;   // ±1000 °/s
   delay(50);   // tempo para o DLPF assentar
   return true;
 }

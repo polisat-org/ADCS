@@ -97,6 +97,8 @@ const uint16_t ESCON_READY_GRACE_MS = 200;  // tolerância após o Enable
  * 5. GIROSCÓPIO MPU-9250
  * ══════════════════════════════════════════════════════════════════════════ */
 const uint8_t MPU_ADDR      = 0x68;      // AD0 sem ligação na PCB -> 0x68
+// Faixa ±1000 °/s = ±167 rpm: folga acima de OMEGA_ABORT (±500 °/s satura em
+// 83 rpm). Resolução 0.03 °/s, muito abaixo do necessário.
 const float   GYRO_Z_SIGN   = 1.0f;      // -1 se o eixo Z do MPU apontar contra o da roda
 // Calibração de bias: o satélite tem que estar parado. Se a leitura variar
 // mais que isso durante a média, a calibração é recusada.
@@ -116,9 +118,14 @@ const float LPF_ALPHA = (2.0f*PI*LPF_FC*DT) / (1.0f + 2.0f*PI*LPF_FC*DT);
 // "Na faixa" = |ω| <= OMEGA_THRESHOLD por SETTLE_SAMPLES amostras seguidas.
 const uint16_t SETTLE_SAMPLES = 50;                             // 0.5 s
 
-// Se a faixa não for atingida neste tempo após o comando 2, algo está errado
-// (sensor, sentido invertido, ESCON desabilitado): o motor é desligado.
-const uint32_t MANEUVER_TIMEOUT_MS = (uint32_t)(1500.0f * T_REQUIRE);  // 1.5x = 15 s
+// Sem timeout: o detumbling só termina por comando (na prova, quem decide é a
+// banca). A proteção contra sentido invertido é por SOBREVELOCIDADE: com a
+// roda certa, o controle só tira rotação do corpo; |ω| acima de OMEGA_ABORT
+// por OVERSPEED_SAMPLES seguidas significa que ele está ACELERANDO o corpo
+// (INVERT_DIR / GYRO_Z_SIGN errados). Com o sentido invertido, partindo de
+// 60 rpm, o corpo passa de 120 rpm em ~2.2 s.
+const float    OMEGA_ABORT       = 12.566f;   // [rad/s] 120 rpm (2x a rotação inicial)
+const uint16_t OVERSPEED_SAMPLES = 50;        // 0.5 s
 
 // Falhas seguidas de leitura do giroscópio antes de abortar.
 const uint8_t GYRO_MAX_FAILS = 5;                               // 50 ms
