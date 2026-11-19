@@ -1,0 +1,4 @@
+# saídas de compilação
+build/
+*.elf
+*.hex
