@@ -1,50 +1,43 @@
 /* obc_link.h — UART com o OBC (SoftwareSerial: RX = D12, TX = D11)
  *
- * PROTOCOLO
- *   OBC -> ADCS : 1 byte ASCII.  '2' = entra no modo detumbling
- *                                '1' = sai do modo detumbling
- *                 Outros bytes (CR, LF...) são ignorados.
- *   ADCS -> OBC : azimute em graus como float ASCII, uma linha por valor
- *                 ("123.45\r\n"), a cada ATT_TX_PERIOD_MS. ATT_INVALID
- *                 (-1.00) = luz insuficiente para medir.
+ * PROTOCOLO (definido pelo OBC)
+ *   OBC -> ADCS : comando como inteiro de 1 byte (valor binário, não ASCII):
+ *                   1 = inicia detumbling      2 = encerra detumbling
+ *                   3 = inicia busca de azimute 4 = encerra busca
+ *                 Outros valores (ex.: bytes 0 extras do vetor comandoADCS)
+ *                 são ignorados.
+ *   ADCS -> OBC : azimute em graus como string de EXATAMENTE 5 caracteres,
+ *                 sem terminador: 270.5° -> "270.5", 45.3° -> "045.3".
+ *
+ * O OBC recebe com HAL_UART_Receive_IT(&huart1, angulo, sizeof(angulo) - 1),
+ * ou seja, em blocos fixos de 5 bytes. Por isso nada além dessas 5 letras
+ * pode sair por este TX: um byte a mais desalinharia todas as leituras
+ * seguintes. Mensagens de depuração vão só para o USB.
  *
  * TEMPO REAL
  *   O SoftwareSerial transmite com as interrupções desligadas (~1.04 ms por
- *   byte a 9600 baud). Para não atrasar o loop de 100 Hz, a linha vai para
- *   uma fila e service() envia UM byte por ciclo de controle (100 B/s, contra
- *   ~40 B/s de telemetria).
+ *   byte a 9600 baud). As 5 letras saem juntas (~5.2 ms), num ciclo em que os
+ *   LDRs não são lidos, para caber nos 10 ms do loop. Enviar em rajada também
+ *   diminui a chance de o OBC começar a ouvir no meio de uma mensagem.
  *
  * LIMITAÇÃO
- *   O SoftwareSerial é half-duplex: um byte que chega do OBC enquanto um byte
- *   está saindo pode ser perdido (~4 % do tempo com a telemetria a 5 Hz). O
- *   OBC deve reenviar o comando se o efeito não aparecer.
+ *   O SoftwareSerial é half-duplex: um comando que chega durante esses 5 ms
+ *   pode se perder (~0.5 % do tempo com um envio por segundo).
  */
 #pragma once
 #include <Arduino.h>
 
-class ObcLink : public Print {
+class ObcLink {
 public:
   void begin();
 
   // Próximo byte recebido do OBC, ou -1 se não houver.
   int readCommand();
 
-  // Enfileira o azimute. Retorna false (linha descartada) se a fila estiver cheia.
-  bool sendAttitude(float azDeg);
+  // Envia o azimute nos 5 caracteres do protocolo (bloqueia ~5 ms a 9600).
+  void sendAzimuth(float azDeg);
 
-  // Envia no máximo um byte da fila. Chamar uma vez por ciclo de controle.
-  void service();
-
-  uint16_t droppedLines() const { return descartadas; }
-
-  // Print: escreve na fila (não bloqueia).
-  size_t write(uint8_t b) override;
-  using Print::write;
-
-private:
-  static const uint8_t FILA = 32;
-  uint8_t buf[FILA];
-  uint8_t ini = 0, fim = 0;
-  uint16_t descartadas = 0;
-  uint8_t livre() const { return (uint8_t)(FILA - 1 - (uint8_t)(fim - ini + FILA) % FILA); }
+  // "270.5", "045.3", "000.0": 0.0–359.9 arredondado a 0.1°. 'out' precisa
+  // de AZ_MSG_LEN + 1 bytes (o '\0' não é transmitido).
+  static void formatAzimuth(float azDeg, char *out);
 };

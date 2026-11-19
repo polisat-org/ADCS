@@ -161,17 +161,31 @@ const float    LDR_GAMMA         = 1.0f;
 // suficiente para um azimute confiável.
 const float    LDR_MIN_SIGNAL    = 0.05f;
 const uint32_t ATT_SAMPLE_PERIOD_MS = 100;  // amostragem dos LDRs: 10 Hz
+const float    ATT_INVALID          = -1.0f; // valor interno de "sem luz suficiente"
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 8. UART COM O OBC (SoftwareSerial em D11/D12) E DEPURAÇÃO (USB)
  * ══════════════════════════════════════════════════════════════════════════
- * Comandos (1 byte ASCII):  '2' = entra no detumbling,  '1' = sai.
- * Telemetria no TX: azimute em graus, float com 2 casas, uma linha por valor.
+ * OBC -> ADCS: comando como INTEIRO de 1 byte (o OBC faz atoi() e envia o
+ * byte; não é o caractere ASCII). Bytes fora de 1..4 (ex.: zeros extras de
+ * comandoADCS[]) são ignorados.
+ * ADCS -> OBC: azimute como string de EXATAMENTE AZ_MSG_LEN caracteres, sem
+ * terminador ("270.5", "045.3"). O OBC lê com HAL_UART_Receive_IT de
+ * tamanho fixo: um byte a mais desalinharia todas as leituras seguintes.
  */
-const uint32_t UART_BAUD          = 9600;
-const uint32_t ATT_TX_PERIOD_MS   = 200;     // telemetria de atitude: 5 Hz
-const float    ATT_INVALID        = -1.0f;   // enviado quando não há luz suficiente
-const uint8_t  ATT_TX_DECIMALS    = 2;
+const uint8_t CMD_DETUMBLING_INICIA = 1;
+const uint8_t CMD_DETUMBLING_PARA   = 2;
+const uint8_t CMD_AZIMUTE_INICIA    = 3;
+const uint8_t CMD_AZIMUTE_PARA      = 4;
+
+// TEM que ser igual ao BaudRate do huart1 no OBC. O SoftwareSerial recebe
+// bem até 38400; acima disso a recepção do comando fica pouco confiável.
+const uint32_t UART_BAUD       = 9600;
+const uint8_t  AZ_MSG_LEN      = 5;      // = sizeof(angulo) - 1 no OBC
+// Na busca, o azimute é enviado a cada AZ_TX_PERIOD_MS enquanto houver luz
+// suficiente (média das amostras de 10 Hz desse intervalo). Sem luz, nada é
+// enviado e a busca continua. O OBC guarda o último valor recebido.
+const uint32_t AZ_TX_PERIOD_MS = 1000;
 
 const uint32_t DEBUG_BAUD         = 115200;  // USB (D0/D1 livres na PCB)
 const uint32_t DEBUG_PERIOD_MS    = 100;     // telemetria de depuração: 10 Hz

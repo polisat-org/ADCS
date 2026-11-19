@@ -7,34 +7,22 @@ static SoftwareSerial uart(PIN_UART_RX, PIN_UART_TX);
 
 void ObcLink::begin() {
   uart.begin(UART_BAUD);
-  ini = fim = 0;
 }
 
 int ObcLink::readCommand() {
   return uart.available() > 0 ? uart.read() : -1;
 }
 
-size_t ObcLink::write(uint8_t b) {
-  if (livre() == 0) return 0;
-  buf[fim] = b;
-  fim = (fim + 1) % FILA;
-  return 1;
+void ObcLink::formatAzimuth(float azDeg, char *out) {
+  // Décimos de grau; 359.95 arredonda para 3600 = 360.0 e volta para 000.0.
+  long d = (long)(azDeg * 10.0f + 0.5f);
+  d %= 3600;
+  if (d < 0) d += 3600;
+  snprintf(out, AZ_MSG_LEN + 1, "%03u.%u", (unsigned)(d / 10), (unsigned)(d % 10));
 }
 
-bool ObcLink::sendAttitude(float azDeg) {
-  // "-1.00\r\n" ou "359.99\r\n": no máximo 8 bytes. Só escreve a linha se
-  // couber inteira, para o OBC nunca receber um número cortado.
-  if (livre() < 10) {
-    descartadas++;
-    return false;
-  }
-  print(azDeg, ATT_TX_DECIMALS);
-  print(F("\r\n"));
-  return true;
-}
-
-void ObcLink::service() {
-  if (ini == fim) return;
-  uart.write(buf[ini]);
-  ini = (ini + 1) % FILA;
+void ObcLink::sendAzimuth(float azDeg) {
+  char msg[AZ_MSG_LEN + 1];
+  formatAzimuth(azDeg, msg);
+  uart.write((const uint8_t *)msg, AZ_MSG_LEN);
 }

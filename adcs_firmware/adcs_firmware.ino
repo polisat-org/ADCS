@@ -2,14 +2,17 @@
  *
  * Equipe: POLISAT · Subsistema: ADCS · Cubedesign 2026
  *
- * Constantes e pinagem: config.h
+ * Constantes e pinagem: config.h · Protocolo com o OBC: obc_link.h
  *
- * OBC (UART D12/D11, 9600 8N1): '2' = entra no detumbling, '1' = sai.
- * Telemetria no TX: azimute [°] como float, uma linha a cada 200 ms.
+ * OBC (UART D12/D11): comandos como inteiros de 1 byte
+ *   1 = inicia detumbling   2 = encerra detumbling
+ *   3 = inicia busca de azimute (envia "270.5" a cada 1 s enquanto houver luz)
+ *   4 = encerra busca
  *
- * DEPURAÇÃO (USB, 115200): comandos '2' / '1', 'C' calibra o giroscópio
- * (parado, modo 1), '?' imprime o estado, 'L' imprime os LDRs (calibração).
- * No modo 2 sai uma linha CSV a 10 Hz:  t[s], omega[rpm], torque[mN·m]
+ * DEPURAÇÃO (USB, 115200): os mesmos comandos como dígitos ASCII '1'..'4',
+ * mais 'C' (calibra o giroscópio, parado e sem detumbling), '?' (estado) e
+ * 'L' (lê e imprime os LDRs). Com o detumbling ativo sai uma linha CSV a
+ * 10 Hz:  t[s], omega[rpm], torque[mN·m]
  */
 #include "config.h"
 #include "gyro_mpu9250.h"
@@ -24,10 +27,12 @@ Detumbling detumbling;
 SunSensor sun;
 ObcLink obc;
 
-uint32_t proximoCicloUs = 0;
-uint32_t ultimoDebugMs  = 0;
+bool     buscandoAzimute = false;
+uint32_t proximoCicloUs  = 0;
+uint32_t ultimoDebugMs   = 0;
 uint32_t ultimaAtitudeMs = 0;
 uint32_t ultimoEnvioMs   = 0;
+float    ultimoAzEnviado = ATT_INVALID;
 
 const float RADS_TO_RPM = 9.5493f;
 
@@ -49,22 +54,44 @@ void calibrarGyro() {
   }
 }
 
+void iniciarBusca() {
+  if (buscandoAzimute) return;
+  float descarta;
+  sun.takeAverage(descarta);   // zera o acumulador: só valem amostras novas
+  buscandoAzimute = true;
+  ultimoEnvioMs = millis();
+  Serial.println(F("# busca de azimute ATIVA"));
+}
+
+void pararBusca() {
+  if (!buscandoAzimute) return;
+  buscandoAzimute = false;
+  Serial.println(F("# busca de azimute PARADA (comando 4)"));
+}
+
 void imprimirEstado() {
-  Serial.print(F("# modo="));       Serial.print(detumbling.active() ? 2 : 1);
-  Serial.print(F(" giro_ok="));     Serial.print(detumbling.sensorOk());
-  Serial.print(F(" omega_rpm="));   Serial.print(detumbling.omega() * RADS_TO_RPM, 2);
-  Serial.print(F(" na_faixa="));    Serial.print(detumbling.inRange());
-  Serial.print(F(" t_faixa_s="));   Serial.print(detumbling.timeToRangeMs() * 0.001f, 2);
-  Serial.print(F(" escon_ready=")); Serial.print(escon.ready());
-  Serial.print(F(" az_deg="));      Serial.print(sun.azimuthDeg(), 2);
-  Serial.print(F(" tm_descartadas=")); Serial.print(obc.droppedLines());
-  Serial.print(F(" Kp="));          Serial.println(KP, 6);
+  char az[AZ_MSG_LEN + 1];
+  Serial.print(F("# detumbling="));  Serial.print(detumbling.active());
+  Serial.print(F(" busca_az="));     Serial.print(buscandoAzimute);
+  Serial.print(F(" giro_ok="));      Serial.print(detumbling.sensorOk());
+  Serial.print(F(" omega_rpm="));    Serial.print(detumbling.omega() * RADS_TO_RPM, 2);
+  Serial.print(F(" na_faixa="));     Serial.print(detumbling.inRange());
+  Serial.print(F(" t_faixa_s="));    Serial.print(detumbling.timeToRangeMs() * 0.001f, 2);
+  Serial.print(F(" escon_ready="));  Serial.print(escon.ready());
+  Serial.print(F(" ultimo_az="));
+  if (ultimoAzEnviado == ATT_INVALID) {
+    Serial.println(F("nenhum"));
+  } else {
+    ObcLink::formatAzimuth(ultimoAzEnviado, az);
+    Serial.println(az);
+  }
 }
 
 // Diagnóstico dos LDRs: tensão [V] e leitura normalizada pela calibração.
 // Para recalibrar: mesma luz em cada face, anote V e troque LDR_CAL.
 void imprimirLdrs() {
   static const char *const nomes[4] = {"FRONTAL", "DIREITO", "TRASEIRO", "ESQUERDO"};
+  sun.sample();
   for (uint8_t i = 0; i < 4; i++) {
     Serial.print(F("# "));   Serial.print(nomes[i]);
     Serial.print(F(" V="));  Serial.print(sun.volts(i), 3);
@@ -76,14 +103,37 @@ void imprimirLdrs() {
   Serial.println(sun.valid() ? F(" deg") : F(" (luz insuficiente)"));
 }
 
-// Executa um comando de 1 byte, venha ele da UART do OBC ou do USB.
-void executarComando(char c) {
+// Comandos do protocolo (1..4). Vêm do OBC como inteiro e do USB como dígito.
+void executarComandoMissao(uint8_t cmd) {
+  switch (cmd) {
+    case CMD_DETUMBLING_INICIA: detumbling.start(); break;
+    case CMD_DETUMBLING_PARA:   detumbling.stop(F("comando 2")); break;
+    case CMD_AZIMUTE_INICIA:    iniciarBusca(); break;
+    case CMD_AZIMUTE_PARA:      pararBusca(); break;
+    default:                    break;
+  }
+}
+
+// Do OBC só valem os inteiros 1..4. Zeros extras do vetor comandoADCS e
+// qualquer outro byte são ignorados (nada de comando de depuração por aqui:
+// um byte corrompido não pode, por exemplo, disparar uma calibração).
+void comandoObc(uint8_t b) {
+  if (b >= CMD_DETUMBLING_INICIA && b <= CMD_AZIMUTE_PARA) {
+    Serial.print(F("# OBC: comando "));
+    Serial.println(b);
+    executarComandoMissao(b);
+  }
+}
+
+void comandoUsb(char c) {
+  if (c >= '1' && c <= '4') {
+    executarComandoMissao(c - '0');
+    return;
+  }
   switch (c) {
-    case '2': detumbling.start(); break;
-    case '1': detumbling.stop(F("comando 1")); break;
     case 'C':
     case 'c':
-      if (detumbling.active()) Serial.println(F("ERRO: saia do modo 2 antes de calibrar"));
+      if (detumbling.active()) Serial.println(F("ERRO: encerre o detumbling (2) antes de calibrar"));
       else calibrarGyro();
       break;
     case '?': imprimirEstado(); break;
@@ -109,14 +159,14 @@ void setup() {
   detumbling.begin(&gyro, &escon, gyroOk);
   obc.begin();
 
-  Serial.println(F("# comandos: 2=detumbling  1=sai  C=calibra  ?=estado  L=LDRs"));
+  Serial.println(F("# comandos: 1/2=inicia/encerra detumbling  3/4=inicia/encerra azimute  C ? L"));
   proximoCicloUs = micros();
 }
 
 void loop() {
   int c;
-  while ((c = obc.readCommand()) >= 0) executarComando((char)c);
-  while (Serial.available() > 0) executarComando(Serial.read());
+  while ((c = obc.readCommand()) >= 0) comandoObc((uint8_t)c);
+  while (Serial.available() > 0) comandoUsb(Serial.read());
 
   // Cadência fixa de 100 Hz (delay(10) atrasaria pelo tempo do próprio ciclo).
   uint32_t agoraUs = micros();
@@ -127,23 +177,35 @@ void loop() {
     proximoCicloUs = agoraUs + CONTROL_PERIOD_US;
   }
 
-  // O controle roda primeiro no ciclo; a leitura dos LDRs (~4.5 ms) cabe
-  // no que sobra dos 10 ms.
+  // O controle roda primeiro no ciclo.
   detumbling.update();
 
   uint32_t agoraMs = millis();
-  if (agoraMs - ultimaAtitudeMs >= ATT_SAMPLE_PERIOD_MS) {
-    ultimaAtitudeMs = agoraMs;
-    sun.sample();
+  if (buscandoAzimute) {
+    // Num ciclo: OU lê os LDRs (~4.5 ms) OU envia o azimute (~5.2 ms), para
+    // não estourar os 10 ms. Se os dois vencem juntos, o envio vai no próximo.
+    bool leuLdr = false;
+    if (agoraMs - ultimaAtitudeMs >= ATT_SAMPLE_PERIOD_MS) {
+      ultimaAtitudeMs = agoraMs;
+      sun.sample();
+      leuLdr = true;
+    }
+    if (!leuLdr && agoraMs - ultimoEnvioMs >= AZ_TX_PERIOD_MS) {
+      ultimoEnvioMs = agoraMs;
+      float az;
+      if (sun.takeAverage(az)) {
+        obc.sendAzimuth(az);
+        ultimoAzEnviado = az;
+        char txt[AZ_MSG_LEN + 1];
+        ObcLink::formatAzimuth(az, txt);
+        Serial.print(F("# azimute enviado: "));
+        Serial.println(txt);
+      } else {
+        // Sem luz suficiente: nada vai para o OBC; a busca continua.
+        Serial.println(F("# buscando azimute: luz insuficiente"));
+      }
+    }
   }
-
-  if (agoraMs - ultimoEnvioMs >= ATT_TX_PERIOD_MS) {
-    ultimoEnvioMs = agoraMs;
-    float az;
-    sun.takeAverage(az);   // az = ATT_INVALID se não havia luz suficiente
-    obc.sendAttitude(az);
-  }
-  obc.service();   // 1 byte por ciclo (~1 ms com interrupções desligadas)
 
   if (detumbling.active() && agoraMs - ultimoDebugMs >= DEBUG_PERIOD_MS) {
     ultimoDebugMs = agoraMs;
