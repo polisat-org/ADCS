@@ -5,20 +5,23 @@
  * Constantes e pinagem: config.h
  *
  * DEPURAÇÃO (USB, 115200): comandos '2' / '1', 'C' calibra o giroscópio
- * (parado, modo 1), '?' imprime o estado. No modo 2 sai uma linha CSV a
- * 10 Hz:  t[s], omega[rpm], torque[mN·m]
+ * (parado, modo 1), '?' imprime o estado, 'L' imprime os LDRs (calibração).
+ * No modo 2 sai uma linha CSV a 10 Hz:  t[s], omega[rpm], torque[mN·m]
  */
 #include "config.h"
 #include "gyro_mpu9250.h"
 #include "escon.h"
 #include "detumbling.h"
+#include "sun_sensor.h"
 
 GyroMPU9250 gyro;
 Escon escon;
 Detumbling detumbling;
+SunSensor sun;
 
 uint32_t proximoCicloUs = 0;
 uint32_t ultimoDebugMs  = 0;
+uint32_t ultimaAtitudeMs = 0;
 
 const float RADS_TO_RPM = 9.5493f;
 
@@ -26,11 +29,7 @@ const float RADS_TO_RPM = 9.5493f;
 // desabilitado com comando zero, LDRs desligados.
 void pinosSeguros() {
   escon.begin();
-
-  pinMode(PIN_LDR_BANK_A, OUTPUT);
-  digitalWrite(PIN_LDR_BANK_A, LOW);
-  pinMode(PIN_LDR_BANK_B, OUTPUT);
-  digitalWrite(PIN_LDR_BANK_B, LOW);
+  sun.begin();
 }
 
 void calibrarGyro() {
@@ -51,7 +50,23 @@ void imprimirEstado() {
   Serial.print(F(" na_faixa="));    Serial.print(detumbling.inRange());
   Serial.print(F(" t_faixa_s="));   Serial.print(detumbling.timeToRangeMs() * 0.001f, 2);
   Serial.print(F(" escon_ready=")); Serial.print(escon.ready());
+  Serial.print(F(" az_deg="));      Serial.print(sun.azimuthDeg(), 2);
   Serial.print(F(" Kp="));          Serial.println(KP, 6);
+}
+
+// Diagnóstico dos LDRs: tensão [V] e leitura normalizada pela calibração.
+// Para recalibrar: mesma luz em cada face, anote V e troque LDR_CAL.
+void imprimirLdrs() {
+  static const char *const nomes[4] = {"FRONTAL", "DIREITO", "TRASEIRO", "ESQUERDO"};
+  for (uint8_t i = 0; i < 4; i++) {
+    Serial.print(F("# "));   Serial.print(nomes[i]);
+    Serial.print(F(" V="));  Serial.print(sun.volts(i), 3);
+    Serial.print(F(" n="));  Serial.println(sun.norm(i), 3);
+  }
+  Serial.print(F("# x="));   Serial.print(sun.x(), 3);
+  Serial.print(F(" y="));    Serial.print(sun.y(), 3);
+  Serial.print(F(" az="));   Serial.print(sun.azimuthDeg(), 2);
+  Serial.println(sun.valid() ? F(" deg") : F(" (luz insuficiente)"));
 }
 
 // Executa um comando de 1 byte, venha ele da UART do OBC ou do USB.
@@ -65,6 +80,8 @@ void executarComando(char c) {
       else calibrarGyro();
       break;
     case '?': imprimirEstado(); break;
+    case 'L':
+    case 'l': imprimirLdrs(); break;
     default: break;   // CR, LF e ruído
   }
 }
@@ -84,7 +101,7 @@ void setup() {
   }
   detumbling.begin(&gyro, &escon, gyroOk);
 
-  Serial.println(F("# comandos: 2=detumbling  1=sai  C=calibra  ?=estado"));
+  Serial.println(F("# comandos: 2=detumbling  1=sai  C=calibra  ?=estado  L=LDRs"));
   proximoCicloUs = micros();
 }
 
@@ -100,9 +117,16 @@ void loop() {
     proximoCicloUs = agoraUs + CONTROL_PERIOD_US;
   }
 
+  // O controle roda primeiro no ciclo; a leitura dos LDRs (~4.5 ms) cabe
+  // no que sobra dos 10 ms.
   detumbling.update();
 
   uint32_t agoraMs = millis();
+  if (agoraMs - ultimaAtitudeMs >= ATT_SAMPLE_PERIOD_MS) {
+    ultimaAtitudeMs = agoraMs;
+    sun.sample();
+  }
+
   if (detumbling.active() && agoraMs - ultimoDebugMs >= DEBUG_PERIOD_MS) {
     ultimoDebugMs = agoraMs;
     Serial.print(detumbling.elapsedMs() * 0.001f, 2);        Serial.print(',');
