@@ -4,6 +4,9 @@
  *
  * Constantes e pinagem: config.h
  *
+ * OBC (UART D12/D11, 9600 8N1): '2' = entra no detumbling, '1' = sai.
+ * Telemetria no TX: azimute [°] como float, uma linha a cada 200 ms.
+ *
  * DEPURAÇÃO (USB, 115200): comandos '2' / '1', 'C' calibra o giroscópio
  * (parado, modo 1), '?' imprime o estado, 'L' imprime os LDRs (calibração).
  * No modo 2 sai uma linha CSV a 10 Hz:  t[s], omega[rpm], torque[mN·m]
@@ -13,15 +16,18 @@
 #include "escon.h"
 #include "detumbling.h"
 #include "sun_sensor.h"
+#include "obc_link.h"
 
 GyroMPU9250 gyro;
 Escon escon;
 Detumbling detumbling;
 SunSensor sun;
+ObcLink obc;
 
 uint32_t proximoCicloUs = 0;
 uint32_t ultimoDebugMs  = 0;
 uint32_t ultimaAtitudeMs = 0;
+uint32_t ultimoEnvioMs   = 0;
 
 const float RADS_TO_RPM = 9.5493f;
 
@@ -51,6 +57,7 @@ void imprimirEstado() {
   Serial.print(F(" t_faixa_s="));   Serial.print(detumbling.timeToRangeMs() * 0.001f, 2);
   Serial.print(F(" escon_ready=")); Serial.print(escon.ready());
   Serial.print(F(" az_deg="));      Serial.print(sun.azimuthDeg(), 2);
+  Serial.print(F(" tm_descartadas=")); Serial.print(obc.droppedLines());
   Serial.print(F(" Kp="));          Serial.println(KP, 6);
 }
 
@@ -100,12 +107,15 @@ void setup() {
     calibrarGyro();
   }
   detumbling.begin(&gyro, &escon, gyroOk);
+  obc.begin();
 
   Serial.println(F("# comandos: 2=detumbling  1=sai  C=calibra  ?=estado  L=LDRs"));
   proximoCicloUs = micros();
 }
 
 void loop() {
+  int c;
+  while ((c = obc.readCommand()) >= 0) executarComando((char)c);
   while (Serial.available() > 0) executarComando(Serial.read());
 
   // Cadência fixa de 100 Hz (delay(10) atrasaria pelo tempo do próprio ciclo).
@@ -126,6 +136,14 @@ void loop() {
     ultimaAtitudeMs = agoraMs;
     sun.sample();
   }
+
+  if (agoraMs - ultimoEnvioMs >= ATT_TX_PERIOD_MS) {
+    ultimoEnvioMs = agoraMs;
+    float az;
+    sun.takeAverage(az);   // az = ATT_INVALID se não havia luz suficiente
+    obc.sendAttitude(az);
+  }
+  obc.service();   // 1 byte por ciclo (~1 ms com interrupções desligadas)
 
   if (detumbling.active() && agoraMs - ultimoDebugMs >= DEBUG_PERIOD_MS) {
     ultimoDebugMs = agoraMs;
