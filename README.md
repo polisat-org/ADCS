@@ -5,7 +5,7 @@ Firmware do microcontrolador da placa ADCS do POLISAT (Cubedesign 2026). Ele faz
 1. **Detumbling** no eixo Z, com a roda de reação (maxon EC 20 flat + ESCON Module 24/2) e o giroscópio do MPU-9250. A lei de controle e as constantes são as do simulador (`params.m`); os valores estão copiados em `config.h`.
 2. **Determinação de atitude (azimute)** a partir de uma fonte de luz, com 4 LDRs (faces FRONTAL, DIREITO, TRASEIRO e ESQUERDO).
 
-O OBC comanda o modo pela UART e recebe o azimute de volta.
+O OBC liga e desliga cada função pela UART (comandos 1–4) e recebe o azimute de volta.
 
 ## Arquivos (`adcs_firmware/`)
 
@@ -17,7 +17,7 @@ O OBC comanda o modo pela UART e recebe o azimute de volta.
 | `escon.*` | Torque → PWM 10–90 %, Enable, Direction, Ready |
 | `detumbling.*` | Lei τ = Kp·ω, filtro, faixa-alvo e proteções |
 | `sun_sensor.*` | Leitura dos LDRs em dois bancos e cálculo do azimute |
-| `obc_link.*` | UART com o OBC (SoftwareSerial) com fila de transmissão não bloqueante |
+| `obc_link.*` | UART com o OBC (SoftwareSerial): comandos 1–4 e azimute em 5 caracteres |
 
 Só usa bibliotecas que vêm com o Arduino (`Wire`, `SoftwareSerial`).
 
@@ -29,7 +29,7 @@ Documentação de apoio: [`docs/escon_studio_config.md`](docs/escon_studio_confi
 2. **Tools → Board:** Arduino Nano. **Processor:** ATmega328P. Se o upload falhar, use *ATmega328P (Old Bootloader)*, que é o caso da maioria dos clones.
 3. **Tools → Port:** a porta COM do Nano. Clique em **Upload**.
 
-Não precisa instalar biblioteca. Tamanho atual: 13,9 kB de flash (42 %) e 756 B de RAM (37 %).
+Não precisa instalar biblioteca. Tamanho atual: 15,5 kB de flash (47 %) e 719 B de RAM (35 %).
 
 ## Operação (com tudo montado)
 
@@ -52,14 +52,24 @@ Não precisa instalar biblioteca. Tamanho atual: 13,9 kB de flash (42 %) e 756 B
 
 ### Sequência de operação
 
-1. **Ligue a placa com o satélite PARADO.** Logo depois de ligar, o firmware mede o bias do giroscópio por ~1 s. Se o satélite estiver girando, a calibração é recusada e o bias fica zero (funciona, mas com o erro do sensor, tipicamente < 2 °/s).
-2. Espere a linha `# comandos: ...` no monitor serial (de 1,5 a 3 s após ligar, contando o bootloader). A partir daí o azimute já sai pelo TX a cada 200 ms.
-3. Coloque o satélite em rotação (60 rpm).
-4. O OBC manda **`2`**. A roda começa a absorver a rotação e o corpo cai para menos de 5 rpm em ~8 s.
-5. O controle continua ativo, segurando o corpo abaixo de 5 rpm, até o OBC mandar **`1`**.
-6. Depois do `1` o motor é desabilitado e a roda gira livre. O atrito dela devolve aos poucos a rotação ao corpo; mande `2` de novo se precisar segurar outra vez.
+**Ao ligar:** ligue a placa com o satélite **PARADO**. Logo depois de ligar, o firmware mede o bias do giroscópio por ~1 s. Se o satélite estiver girando, a calibração é recusada e o bias fica zero (funciona, mas com o erro do sensor, tipicamente < 2 °/s). O firmware está pronto quando aparece a linha `# comandos: ...` no monitor serial (de 1,5 a 3 s após ligar, contando o bootloader). Até receber um comando, ele não faz nada e não envia nada.
 
-Durante o detumbling o corpo gira rápido demais para o azimute significar algo. Use o valor de atitude com o satélite parado ou quase parado.
+**Detumbling:**
+
+1. A terra pede o detumbling; o OBC manda **1**. A roda começa a absorver a rotação e o corpo cai para menos de 5 rpm em ~8 s.
+2. O ADCS **não envia nada** ao OBC durante nem ao fim do detumbling. O controle continua ativo, segurando o corpo abaixo de 5 rpm, até chegar o comando de parada. Quem decide o fim é a prova.
+3. A terra manda parar; o OBC manda **2**. O motor é desabilitado e a roda gira livre. O atrito dela devolve aos poucos a rotação ao corpo; mande **1** de novo se precisar segurar outra vez.
+
+**Azimute:**
+
+1. A terra pede o azimute; o OBC manda **3**. O ADCS começa a ler os LDRs a 10 Hz.
+2. A cada 1 s, se houver luz suficiente, o ADCS envia o ângulo médio desse segundo como 5 caracteres (`270.5`). Sem luz suficiente ele não envia nada e continua procurando. Não há timeout.
+3. O OBC guarda o último valor recebido no struct de telemetria e o repassa à terra.
+4. O OBC manda **4**: o ADCS para de procurar e não envia mais nada.
+
+Os dois modos são independentes e podem ficar ativos juntos. Mas, com o corpo girando, o azimute não significa nada: meça com o satélite parado ou quase parado.
+
+O OBC transmite e recebe na task de housekeeping, de minuto em minuto. Então um comando pode chegar até ~1 min depois do pedido da terra, e o valor que vai para a terra é o último que o ADCS mandou antes da leitura do OBC.
 
 ### Saída esperada no monitor serial (115200)
 
@@ -70,17 +80,26 @@ Valores da simulação, partindo de 60 rpm (o bias muda de sensor para sensor):
 # MPU WHO_AM_I = 0x71
 # calibrando bias do giroscopio (mantenha parado)...
 # bias Z = 0.812 deg/s
-# comandos: 2=detumbling  1=sai  C=calibra  ?=estado  L=LDRs
-# MODO 2: detumbling ATIVO
+# comandos: 1/2=inicia/encerra detumbling  3/4=inicia/encerra azimute  C ? L
+# OBC: comando 1
+# detumbling ATIVO
 0.10,58.871,5.875
 0.20,57.099,5.698
 ...
-# faixa de 5 rpm atingida em 8.44 s (controle segue ativo ate o comando 1)
+# faixa de 5 rpm atingida em 8.44 s (controle segue ativo ate o comando 2)
 ...
-# MODO 1: detumbling PARADO (comando 1)
+# OBC: comando 2
+# detumbling PARADO (comando 2)
+# OBC: comando 3
+# busca de azimute ATIVA
+# buscando azimute: luz insuficiente
+# azimute enviado: 270.5
+# azimute enviado: 270.4
+# OBC: comando 4
+# busca de azimute PARADA (comando 4)
 ```
 
-As linhas CSV do modo 2 são `t[s],omega[rpm],torque[mN·m]`. A "faixa atingida" é declarada depois de 0,5 s seguidos abaixo de 5 rpm, por isso aparece ~0,5 s após o cruzamento real.
+As linhas CSV do detumbling são `t[s],omega[rpm],torque[mN·m]`. A "faixa atingida" é declarada depois de 0,5 s seguidos abaixo de 5 rpm, por isso aparece ~0,5 s após o cruzamento real.
 
 ### Mensagens de erro
 
@@ -88,13 +107,15 @@ As linhas CSV do modo 2 são `t[s],omega[rpm],torque[mN·m]`. A "faixa atingida"
 |---|---|---|
 | `ERRO: MPU-9250 nao respondeu no I2C; detumbling bloqueado` | MPU sem alimentação, SDA/SCL (A4/A5) com mau contato, endereço diferente de 0x68 | Conferir solda e 5 V do MPU; reiniciar a placa |
 | `WHO_AM_I` diferente de 0x71/0x73/0x70 | Clone com outro chip | Normalmente funciona; confira se ω responde ao girar |
-| `ERRO: calibracao recusada (em movimento ou falha I2C); bias mantido` | Satélite se mexeu durante a calibração | Deixe parado e mande `C` (no modo 1) |
-| `ERRO: giroscopio indisponivel, detumbling bloqueado` | Recebeu `2` sem o MPU ter iniciado | Resolver o erro do MPU e reiniciar |
-| `PARADO (TIMEOUT: ...)` | Não chegou a 5 rpm em 15 s | Quase sempre é o sentido da roda invertido (`INVERT_DIR`) ou o Enable do ESCON. Veja também `GYRO_Z_SIGN` |
+| `ERRO: calibracao recusada (em movimento ou falha I2C); bias mantido` | Satélite se mexeu durante a calibração | Deixe parado e mande `C` pelo USB (com o detumbling desligado) |
+| `ERRO: giroscopio indisponivel, detumbling bloqueado` | Recebeu `1` sem o MPU ter iniciado | Resolver o erro do MPU e reiniciar |
+| `PARADO (SOBREVELOCIDADE: ...)` | \|ω\| passou de 120 rpm por 0,5 s: o controle está acelerando o corpo | Sentido da roda invertido (`INVERT_DIR`) ou eixo do MPU invertido (`GYRO_Z_SIGN`); mude só um deles |
 | `PARADO (falha de leitura do giroscopio)` | 5 leituras I2C seguidas falharam | Mau contato ou ruído no I2C; verificar cabos e o aterramento do motor |
 | `PARADO (ESCON sinalizou erro no Ready)` | ESCON em erro (só com `ESCON_READY_CHECK = true`) | Ver o erro no ESCON Studio (LED vermelho) |
-| `ERRO: saia do modo 2 antes de calibrar` | `C` enviado com o detumbling ativo | Mande `1` antes |
-| Azimute sempre `-1.00` | Luz fraca demais ou LDRs desconectados | Mande `L` e confira as tensões |
+| `ERRO: encerre o detumbling (2) antes de calibrar` | `C` enviado com o detumbling ativo | Mande `2` antes |
+| `# buscando azimute: luz insuficiente` sem parar | Luz fraca demais ou LDRs desconectados | Mande `L` e confira as tensões |
+| `# detumbling ATIVO` mas a roda não gira | ESCON sem alimentação, Enable/PWM mal ligados ou ESCON em erro | Ver os LEDs do ESCON e o checklist de `docs/escon_studio_config.md` |
+| Nenhum `# OBC: comando ...` aparece | Baud diferente do huart1, Tx/Rx trocados ou GND não comum | Ver a seção *Protocolo com o OBC* |
 
 ### Ajustes mais comuns (`config.h`)
 
@@ -104,7 +125,8 @@ As linhas CSV do modo 2 são `t[s],omega[rpm],torque[mN·m]`. A "faixa atingida"
 | `GYRO_Z_SIGN` | O eixo Z do MPU está montado ao contrário do eixo da roda |
 | `LDR_CAL` | Recalibração ou numeração diferente dos LDRs |
 | `LDR_GAMMA` | Depois de medir a não linearidade dos LDRs |
-| `UART_BAUD` | O OBC usa outra velocidade (máx. recomendado no SoftwareSerial: 38400) |
+| `UART_BAUD` | Tem que ser igual ao `BaudRate` do huart1 do OBC (máx. recomendado no SoftwareSerial: 38400) |
+| `AZ_TX_PERIOD_MS` | Intervalo entre envios do azimute durante a busca (padrão 1 s) |
 | `ESCON_READY_CHECK` | Depois de configurar DigOUT4 = Ready no ESCON |
 | `PIN_UART_TX` / `PIN_UART_RX` | O OBC não recebe nada: os rótulos Tx/Rx da PCB podem estar do ponto de vista do OBC |
 
@@ -131,31 +153,50 @@ As linhas CSV do modo 2 são `t[s],omega[rpm],torque[mN·m]`. A "faixa atingida"
 
 ## Protocolo com o OBC
 
-UART em **9600 8N1** (`UART_BAUD`).
+UART em **9600 8N1** (`UART_BAUD`), pelo SoftwareSerial em D12 (RX) / D11 (TX).
 
 | Sentido | Conteúdo |
 |---|---|
-| OBC → ADCS | `2` (ASCII 0x32): entra no **modo detumbling** |
-| OBC → ADCS | `1` (ASCII 0x31): sai do modo detumbling (motor desabilitado) |
-| ADCS → OBC | azimute em graus, `float` com 2 casas, uma linha a cada 200 ms: `123.45\r\n` |
-| ADCS → OBC | `-1.00` = luz insuficiente para medir |
+| OBC → ADCS | inteiro **1**: inicia o detumbling |
+| OBC → ADCS | inteiro **2**: encerra o detumbling (motor desabilitado) |
+| OBC → ADCS | inteiro **3**: inicia a busca de azimute |
+| OBC → ADCS | inteiro **4**: encerra a busca de azimute |
+| ADCS → OBC | azimute como string de **exatamente 5 caracteres**, sem terminador: 270,5° → `270.5`, 45,3° → `045.3` |
 
-Outros bytes (CR, LF etc.) são ignorados, então mandar `2\n` também funciona.
+- **Comandos:** são o **valor binário** do byte (o OBC faz `atoi()` e envia `comandoADCS`), não o caractere ASCII. Qualquer outro valor é ignorado, inclusive os bytes 0 que sobram se `comandoADCS` tiver mais de uma posição.
+- **Ângulo:** vai de `000.0` a `359.9`, arredondado a 0,1°, sempre com zeros à esquerda para manter os 5 caracteres. Só sai durante a busca (comando 3), uma vez por segundo, e só quando há luz suficiente. Fora isso, **nada** sai por esse TX; as mensagens de depuração vão só pelo USB.
+- **Detumbling:** o ADCS não envia nada, nem ao atingir a faixa.
 
-**Modo 2:** o firmware lê o giroscópio a 100 Hz e comanda a roda para levar |ω| abaixo de 5 rpm e **manter** lá até chegar o `1`. Ele não desliga sozinho ao atingir a faixa, porque o atrito da roda devolveria o momento ao corpo. O motor é desligado e o modo volta a 1 automaticamente em três casos: a faixa não foi atingida em 15 s; o giroscópio falhou 5 vezes seguidas; o ESCON sinalizou erro no Ready (só com `ESCON_READY_CHECK = true`).
+**O que precisa estar certo no OBC:**
 
-**Limitação do SoftwareSerial:** ele é half-duplex. Um comando que chega exatamente enquanto um byte de telemetria está saindo pode se perder (~4 % do tempo). Se o modo não mudar, o OBC deve reenviar.
+1. `huart1` com **BaudRate = 9600** (ou mude `UART_BAUD` para o mesmo valor). O padrão do CubeMX é 115200, e o SoftwareSerial não recebe de forma confiável nessa velocidade.
+2. `char angulo[6]`: 5 caracteres mais o `'\0'`, para o `Receive_IT(..., sizeof(angulo) - 1)` pegar exatamente 5 bytes e o `printf("%s")` ter o terminador.
+3. **Alinhamento:** como a recepção é por contagem fixa de 5 bytes, se o OBC começar a ouvir no meio de uma mensagem (por exemplo, ao reiniciar) ou perder um byte, **todas** as leituras seguintes ficam deslocadas (`5270.`, `4270.`...). O ADCS envia as 5 letras de uma vez (~5 ms) com 1 s de intervalo, o que torna isso raro, mas não impossível. A solução robusta é no OBC: `HAL_UARTEx_ReceiveToIdle_IT`, que separa as mensagens pelo silêncio entre elas.
+4. **Erro de overrun:** se o huart1 tiver um erro (ORE, ruído), o HAL aborta a recepção e o `HAL_UART_RxCpltCallback` não é mais chamado. Rearme o `HAL_UART_Receive_IT` também em `HAL_UART_ErrorCallback`, senão o OBC para de receber o ângulo até reiniciar.
+5. GND comum entre OBC e ADCS (pelo conector de pilha).
+
+**Limitação do SoftwareSerial:** ele é half-duplex. Um comando que chega exatamente durante os ~5 ms de envio do ângulo pode se perder (~0,5 % do tempo durante a busca). Se o efeito não aparecer, o OBC deve reenviar.
+
+### Proteções do detumbling
+
+O detumbling não tem timeout: só termina pelo comando 2. O motor é desligado automaticamente em três casos:
+
+- **Sobrevelocidade:** |ω| > 120 rpm por 0,5 s. Com o sentido certo, o controle só tira rotação do corpo, então isso só acontece com a roda ou o giroscópio invertidos. Simulado: partindo de 60 rpm com o sentido invertido, desliga em 2,8 s.
+- **Giroscópio:** 5 leituras seguidas com falha.
+- **ESCON:** Ready baixo (só com `ESCON_READY_CHECK = true`).
+
+Nesses casos o ADCS também não avisa o OBC (o protocolo não prevê); a causa aparece só no USB.
 
 ## Depuração pelo USB (115200)
 
 | Comando | Ação |
 |---|---|
-| `2` / `1` | Mesmos comandos do OBC |
-| `C` | Recalibra o bias do giroscópio (satélite **parado**, só no modo 1) |
-| `?` | Estado: modo, ω, se está na faixa, tempo até a faixa, Ready, azimute |
-| `L` | LDRs: tensão, valor normalizado, x, y e azimute |
+| `1` `2` `3` `4` | Mesmos comandos do OBC, digitados como caracteres |
+| `C` | Recalibra o bias do giroscópio (satélite **parado**, detumbling desligado) |
+| `?` | Estado: detumbling e busca ligados ou não, ω, faixa, tempo até a faixa, Ready, último azimute enviado |
+| `L` | Lê os LDRs agora e mostra tensão, valor normalizado, x, y e azimute |
 
-No modo 2 sai uma linha CSV a 10 Hz: `t[s],omega[rpm],torque[mN·m]`.
+Com o detumbling ativo sai uma linha CSV a 10 Hz: `t[s],omega[rpm],torque[mN·m]`.
 
 ## Determinação de atitude
 
@@ -164,7 +205,7 @@ n_i = (V_i / LDR_CAL[i]) ^ (1/LDR_GAMMA)
 az  = atan2(n_DIREITO − n_ESQUERDO, n_FRONTAL − n_TRASEIRO)    → [0, 360)°
 ```
 
-0° = luz de frente para a face FRONTAL, 90° = face DIREITA. A diferença entre faces opostas cancela a luz ambiente comum às duas. Para a telemetria, as amostras de 10 Hz entram numa média vetorial, que não salta em 0/360°.
+0° = luz de frente para a face FRONTAL, 90° = face DIREITA. A diferença entre faces opostas cancela a luz ambiente comum às duas. O valor enviado ao OBC é a média vetorial das amostras de 10 Hz do último segundo, que não salta em 0/360°.
 
 **Premissas a confirmar** (em `config.h`, seção 7):
 
@@ -177,6 +218,6 @@ az  = atan2(n_DIREITO − n_ESQUERDO, n_FRONTAL − n_TRASEIRO)    → [0, 360)�
 1. **Sem motor:** grave, abra o monitor serial e confira `WHO_AM_I` (0x71, 0x73 ou 0x70) e o bias.
 2. **LDRs:** aponte a lanterna para cada face e mande `L`. A face iluminada deve ter o maior `n`, e o `az` deve dar ~0/90/180/270°.
 3. **Varredura de azimute:** gire a fonte de 0° a 360° em passos de 15° e registre o erro. Ele vai para o relatório (HLR-ADCS-03) e, se preciso, para o ajuste de `LDR_GAMMA` ou uma tabela de correção.
-4. **ESCON:** siga o checklist da seção 8 de [`docs/escon_studio_config.md`](docs/escon_studio_config.md), com o satélite **preso**. Gire o corpo à mão no sentido +Z do giroscópio e mande `2`: a roda tem que acelerar **no mesmo sentido** do corpo. Se acelerar ao contrário, mude `INVERT_DIR` (ou `GYRO_Z_SIGN`, se o eixo do MPU estiver invertido), nunca os dois.
-5. **Detumbling no mancal:** a 60 rpm, mande `2`. A simulação da lei discreta (com quantização do PWM) prevê cruzar 5 rpm em **~7,9 s**, com pico de 1,02 A.
-6. **UART:** ligue o OBC (ou um conversor USB-serial em J1) e confira as linhas de azimute e os comandos `1`/`2`.
+4. **ESCON:** siga o checklist da seção 8 de [`docs/escon_studio_config.md`](docs/escon_studio_config.md), com o satélite **preso**. Gire o corpo à mão no sentido +Z do giroscópio e mande `1`: a roda tem que acelerar **no mesmo sentido** do corpo. Se acelerar ao contrário, mude `INVERT_DIR` (ou `GYRO_Z_SIGN`, se o eixo do MPU estiver invertido), nunca os dois.
+5. **Detumbling no mancal:** a 60 rpm, mande `1` (e `2` para encerrar). A simulação da lei discreta (com quantização do PWM) prevê cruzar 5 rpm em **~7,9 s**, com pico de 1,02 A.
+6. **UART:** ligue o OBC e confira no USB do Nano as linhas `# OBC: comando N` e, com o comando 3, o ângulo chegando no OBC. Com um conversor USB-serial em J1 é preciso um terminal que envie bytes binários (ex.: RealTerm), porque digitar `1` no PuTTY envia o ASCII 0x31, que o ADCS ignora.

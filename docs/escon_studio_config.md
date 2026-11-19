@@ -7,7 +7,7 @@ Conjunto: **maxon EC 20 flat 3 W, 6 V, com Hall (351098)** + **ESCON Module 24/2
 comandado por Arduino Nano via PWM (`adcs_firmware/`, pinagem da PCB_LASC_v1.0).
 
 > Cópia de `Simulador/escon_studio_config.md` com a pinagem corrigida para a PCB
-> (D3/D4/D5/D6) e os comandos do firmware atual (`2`/`1`). Os valores do ESCON Studio não mudaram.
+> (D3/D4/D5/D6) e os comandos do firmware atual (`1` inicia, `2` encerra o detumbling). Os valores do ESCON Studio não mudaram.
 
 > Os nomes das opções seguem a interface em inglês do ESCON Studio (Startup Wizard).
 > Podem variar um pouco entre versões do software.
@@ -230,11 +230,11 @@ Faça com o satélite **preso** e o Arduino conectado.
    e a roda parada.
 3. **Escala:** gere um comando conhecido (ex.: torque de 2.94 mN·m = 0.5 A, duty 30 %). O *Controller Monitor*
    deve mostrar **0.50 A** (±0.02 A).
-4. **Sentido:** gire o satélite à mão no sentido +Z do giroscópio (ω_z > 0) e mande `2`.
+4. **Sentido:** gire o satélite à mão no sentido +Z do giroscópio (ω_z > 0) e mande `1`.
    **A roda tem que acelerar no MESMO sentido da rotação do corpo**, que recebe a reação contrária.
    Se acelerar ao contrário, mude `INVERT_DIR = true` no firmware, ou troque a polaridade da Direction no
    ESCON. Não faça as duas coisas.
-5. **Parada:** mande `1`. A corrente deve ir a 0 e o Enable a LOW, e a roda perde velocidade só por atrito.
+5. **Parada:** mande `2`. A corrente deve ir a 0 e o Enable a LOW, e a roda perde velocidade só por atrito.
 6. **Gravar:** os parâmetros do Wizard ficam salvos no ESCON. Exporte também um backup
    (*File → Export Parameters*) e versione junto com este arquivo.
 
