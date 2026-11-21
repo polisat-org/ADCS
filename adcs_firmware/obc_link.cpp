@@ -21,6 +21,12 @@ void ObcLink::formatAzimuth(float azDeg, char *out) {
   snprintf(out, AZ_MSG_LEN + 1, "%03u.%u", (unsigned)(d / 10), (unsigned)(d % 10));
 }
 
+void ObcLink::sendStatus(bool detumbling, bool busca, uint8_t falha) {
+  char m[AZ_MSG_LEN] = { 'S', (char)('0' + (detumbling ? 1 : 0)), (char)('0' + (busca ? 1 : 0)),
+                         (char)('0' + (falha > 9 ? 9 : falha)), '!' };
+  uart.write((const uint8_t *)m, AZ_MSG_LEN);
+}
+
 void ObcLink::sendAzimuth(float azDeg) {
   char msg[AZ_MSG_LEN + 1];
   formatAzimuth(azDeg, msg);

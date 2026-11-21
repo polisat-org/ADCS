@@ -16,6 +16,7 @@ bool Detumbling::start() {
     return false;
   }
   ativo = true;
+  codigoFalha = FALHA_NENHUMA;
   atingiu = false;
   amostrasNaFaixa = 0;
   amostrasSobrevel = 0;
@@ -45,7 +46,7 @@ void Detumbling::update() {
   float w;
   if (!gyro->readZ(w)) {
     // Uma falha isolada mantém o último comando; várias seguidas abortam.
-    if (ativo && ++falhasSeguidas >= GYRO_MAX_FAILS) stop(F("falha de leitura do giroscopio"));
+    if (ativo && ++falhasSeguidas >= GYRO_MAX_FAILS) { codigoFalha = FALHA_GIROSCOPIO; stop(F("falha de leitura do giroscopio")); }
     return;
   }
   falhasSeguidas = 0;
@@ -79,6 +80,7 @@ void Detumbling::update() {
 
   if (fabs(omegaFilt) > OMEGA_ABORT) {
     if (++amostrasSobrevel >= OVERSPEED_SAMPLES) {
+      codigoFalha = FALHA_SOBREVELOCIDADE;
       stop(F("SOBREVELOCIDADE: verifique INVERT_DIR e GYRO_Z_SIGN"));
       return;
     }
@@ -87,6 +89,7 @@ void Detumbling::update() {
   }
 
   if (escon->readyFault()) {
+    codigoFalha = FALHA_ESCON;
     stop(F("ESCON sinalizou erro no Ready"));
   }
 }

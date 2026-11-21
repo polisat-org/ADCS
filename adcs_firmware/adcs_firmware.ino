@@ -33,6 +33,8 @@ uint32_t ultimoDebugMs   = 0;
 uint32_t ultimaAtitudeMs = 0;
 uint32_t ultimoEnvioMs   = 0;
 float    ultimoAzEnviado = ATT_INVALID;
+uint32_t ultimoEstadoMs  = 0;
+bool     estadoPendente  = true;   // manda o estado logo ao ligar (avisa o OBC que subiu)
 
 const float RADS_TO_RPM = 9.5493f;
 
@@ -114,14 +116,25 @@ void executarComandoMissao(uint8_t cmd) {
   }
 }
 
+// Recuperação pelo OBC (comando 5): motor desligado e reinício do firmware. Sem watchdog de propósito:
+// o bootloader antigo dos Nano (ATmegaBOOT) entra em laço de reinício quando o watchdog dispara.
+void reiniciar() {
+  detumbling.stop(F("comando 5: reinicio pelo OBC"));
+  Serial.println(F("# reiniciando (comando 5 do OBC)"));
+  Serial.flush();
+  asm volatile("jmp 0");
+}
+
 // Do OBC só valem os inteiros 1..4. Zeros extras do vetor comandoADCS e
 // qualquer outro byte são ignorados (nada de comando de depuração por aqui:
 // um byte corrompido não pode, por exemplo, disparar uma calibração).
 void comandoObc(uint8_t b) {
-  if (b >= CMD_DETUMBLING_INICIA && b <= CMD_AZIMUTE_PARA) {
+  if (b >= CMD_DETUMBLING_INICIA && b <= CMD_REINICIA) {
     Serial.print(F("# OBC: comando "));
     Serial.println(b);
+    if (b == CMD_REINICIA) reiniciar();
     executarComandoMissao(b);
+    estadoPendente = true;            // confirma o comando no próximo ciclo livre
   }
 }
 
@@ -181,6 +194,7 @@ void loop() {
   detumbling.update();
 
   uint32_t agoraMs = millis();
+  bool enviouNoCiclo = false;   // LDR ou azimute já usaram este ciclo de 10 ms
   if (buscandoAzimute) {
     // Num ciclo: OU lê os LDRs (~4.5 ms) OU envia o azimute (~5.2 ms), para
     // não estourar os 10 ms. Se os dois vencem juntos, o envio vai no próximo.
@@ -189,12 +203,14 @@ void loop() {
       ultimaAtitudeMs = agoraMs;
       sun.sample();
       leuLdr = true;
+      enviouNoCiclo = true;
     }
     if (!leuLdr && agoraMs - ultimoEnvioMs >= AZ_TX_PERIOD_MS) {
       ultimoEnvioMs = agoraMs;
       float az;
       if (sun.takeAverage(az)) {
         obc.sendAzimuth(az);
+        enviouNoCiclo = true;
         ultimoAzEnviado = az;
         char txt[AZ_MSG_LEN + 1];
         ObcLink::formatAzimuth(az, txt);
@@ -205,6 +221,14 @@ void loop() {
         Serial.println(F("# buscando azimute: luz insuficiente"));
       }
     }
+  }
+
+  // Estado para o OBC (confirmação de comando e heartbeat de 2 s), num ciclo sem LDR nem azimute,
+  // para caber nos 10 ms do loop. A variável enviouNoCiclo vem do bloco da busca acima.
+  if (!enviouNoCiclo && (estadoPendente || agoraMs - ultimoEstadoMs >= ESTADO_PERIOD_MS)) {
+    obc.sendStatus(detumbling.active(), buscandoAzimute, detumbling.falha());
+    ultimoEstadoMs = agoraMs;
+    estadoPendente = false;
   }
 
   if (detumbling.active() && agoraMs - ultimoDebugMs >= DEBUG_PERIOD_MS) {
