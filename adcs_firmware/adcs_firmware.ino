@@ -91,7 +91,7 @@ void imprimirEstado() {
 // Para recalibrar: mesma luz em cada face, anote V e troque LDR_CAL.
 void imprimirLdrs() {
   static const char *const nomes[4] = {"FRONTAL", "DIREITO", "TRASEIRO", "ESQUERDO"};
-  sun.sample();
+  sun.sample(false);   // não acumula: o L é só diagnóstico
   for (uint8_t i = 0; i < 4; i++) {
     Serial.print(F("# "));   Serial.print(nomes[i]);
     Serial.print(F(" V="));  Serial.print(sun.volts(i), 3);

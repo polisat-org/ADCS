@@ -1,9 +1,9 @@
 /* escon.h — Interface com o maxon ESCON Module 24/2
  *
- * Modo esperado no ESCON Studio (ver Simulador/escon_studio_config.md):
+ * Modo esperado no ESCON Studio (ver docs/escon_studio_config.md):
  *   Current Controller · Enable & Direction · PWM Set Value em DigIN1
  *   10 % = 0 A, 90 % = DRIVER_I_FS · Enable em DigIN2 (high active)
- *   Direction em DigIN/OUT3 · Ready em DigIN/OUT4 (opcional)
+ *   Direction em DigIN/OUT3 · Ready em DigIN/OUT4 (usado por ESCON_READY_CHECK)
  *
  * O comando é TORQUE na roda [N·m]: τ = Kt·I, e o ESCON fecha a malha de
  * corrente. O sinal do torque vira o pino de direção; o módulo vira duty.

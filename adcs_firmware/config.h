@@ -3,15 +3,15 @@
  * Equipe: POLISAT · Subsistema: ADCS · Cubedesign 2026
  *
  * TODAS as constantes do firmware ficam aqui: pinos (da PCB), parâmetros da
- * planta e do controlador (de Simulador/params.m), escala do ESCON (de
- * Simulador/escon_studio_config.md), calibração dos LDRs e protocolo UART.
- * Os outros arquivos só consomem estes valores.
+ * planta e do controlador (valores do params.m do simulador, externo a este
+ * repositório), escala do ESCON (de docs/escon_studio_config.md), calibração
+ * dos LDRs e protocolo UART. Os outros arquivos só consomem estes valores.
  */
 #pragma once
 #include <Arduino.h>
 
 /* ══════════════════════════════════════════════════════════════════════════
- * 1. PINOS — netlist da PCB_LASC_v1.0 (PCB/Projeto ADCS/PCB_LASC_v1.0.kicad_pcb)
+ * 1. PINOS — netlist da PCB_LASC_v1.0 (projeto da PCB, fora deste repositório)
  * ══════════════════════════════════════════════════════════════════════════
  *
  *  Pino Nano | Rede na PCB          | Liga em
@@ -20,8 +20,8 @@
  *  D4        | /D2IN                | ESCON pino 16  DigIN2   (Enable)
  *  D5        | /D3IN/D1OUT          | ESCON pino 15  DigIN/OUT3 (Direction)
  *  D6        | /D4IN/D2OUT          | ESCON pino 14  DigIN/OUT4 (Ready, saída do ESCON)
- *  A7        | /AOUT1               | ESCON pino 20  AnOUT1   (não usado)
- *  A6        | /AOUT2               | ESCON pino 19  AnOUT2   (não usado)
+ *  A7        | /AOUT1               | ESCON pino 20  AnOUT1   (não usado; No function)
+ *  A6        | /AOUT2               | ESCON pino 19  AnOUT2   (não usado; No function)
  *  A4 / A5   | /A4 /A5              | MPU-9250 SDA / SCL (I2C)
  *  D11       | Tx  (global label)   | conector de pilha J1 pinos 13-14 (UART -> OBC)
  *  D12       | Rx  (global label)   | conector de pilha J1 pinos 7-8   (UART <- OBC)
@@ -32,6 +32,9 @@
  *  D7 / D8   | /HC-05 RX, /HC-05 TX | sem conexão na placa (sobras do HC-05)
  *  D10       | /DISABLE             | sem conexão na placa
  *  D0 / D1   | —                    | livres na placa: ficam para o USB (depuração)
+ *
+ * As saídas AnOUT1/AnOUT2 podem ir a −4 V e o firmware não lê A6/A7: deixe as
+ * duas como "No function" no ESCON Studio.
  *
  * Os LDRs formam uma matriz 2x2: cada transistor (seguidor de emissor)
  * alimenta dois LDRs, e cada entrada analógica lê um LDR de cada par sobre o
@@ -72,12 +75,13 @@ const float T_REQUIRE       = 10.0f;     // [s] requisito de tempo
 const float KP = 9.53e-4f;               // [N·m·s/rad]
 
 /* ══════════════════════════════════════════════════════════════════════════
- * 4. MOTOR + ESCON 24/2   (params.m seção 4, escon_studio_config.md)
+ * 4. MOTOR + ESCON 24/2   (params.m seção 4, docs/escon_studio_config.md)
  * ══════════════════════════════════════════════════════════════════════════
  * O ESCON tem que estar em CURRENT CONTROLLER, Enable & Direction, PWM Set
- * Value em DigIN1 com 10 % = 0 A e 90 % = DRIVER_I_FS. Fora de 10–90 % (ou
- * PWM parado) o ESCON acusa "PWM Set Value Input out of Range", por isso o
- * comando zero é 10 % e não 0 %.
+ * Value em DigIN1 com 10 % = 0 A e 90 % = DRIVER_I_FS. Duty fora de 10–90 %
+ * é saturado pelo ESCON (status "PWM Input Limitation"); sem bordas (0/100 %
+ * ou PWM parado) a frequência cai a 0 Hz e vira o erro "PWM Set Value Input
+ * out of Range". Por isso o comando zero é 10 % e não 0 %.
  */
 const float MOTOR_KT    = 5.88e-3f;      // [N·m/A]
 const float DRIVER_I_FS = 2.0f;          // [A] = "Current at 90 %" no ESCON Studio
@@ -85,11 +89,12 @@ const float TAU_FS      = MOTOR_KT * DRIVER_I_FS;   // [N·m] = 11.76 mN·m
 
 const uint8_t DUTY_MIN_PCT = 10;         // comando zero
 const uint8_t DUTY_MAX_PCT = 90;         // fundo de escala
-const bool    INVERT_DIR   = false;      // true se a roda acelerar no sentido errado
+const bool    INVERT_DIR   = true;      // true se a roda acelerar no sentido errado (não é GYRO_Z_SIGN)
 
 // Ready (DigIN/OUT4). Lido com pull-up; nível alto = ESCON sem erro.
-// Com ESCON_READY_CHECK = true, Ready baixo durante o detumbling desliga o
-// motor. Só ative depois de configurar DigOUT4 = "Ready, High active".
+// O ESCON está configurado com DigOUT4 = "Ready, High active". Se o seu
+// ESCON não tiver essa saída configurada, volte para false: com true e a
+// saída ausente, o detumbling para com "ESCON sinalizou erro no Ready".
 const bool     ESCON_READY_CHECK    = false;
 const uint16_t ESCON_READY_GRACE_MS = 200;  // tolerância após o Enable
 
@@ -99,7 +104,7 @@ const uint16_t ESCON_READY_GRACE_MS = 200;  // tolerância após o Enable
 const uint8_t MPU_ADDR      = 0x68;      // AD0 sem ligação na PCB -> 0x68
 // Faixa ±1000 °/s = ±167 rpm: folga acima de OMEGA_ABORT (±500 °/s satura em
 // 83 rpm). Resolução 0.03 °/s, muito abaixo do necessário.
-const float   GYRO_Z_SIGN   = 1.0f;      // -1 se o eixo Z do MPU apontar contra o da roda
+const float   GYRO_Z_SIGN   = 1.0f;      // -1 se o eixo Z do MPU apontar contra o da roda (não é INVERT_DIR)
 // Calibração de bias: o satélite tem que estar parado. Se a leitura variar
 // mais que isso durante a média, a calibração é recusada.
 const uint16_t GYRO_CAL_SAMPLES  = 100;      // 1 s a 100 Hz
@@ -123,7 +128,8 @@ const uint16_t SETTLE_SAMPLES = 50;                             // 0.5 s
 // roda certa, o controle só tira rotação do corpo; |ω| acima de OMEGA_ABORT
 // por OVERSPEED_SAMPLES seguidas significa que ele está ACELERANDO o corpo
 // (INVERT_DIR / GYRO_Z_SIGN errados). Com o sentido invertido, partindo de
-// 60 rpm, o corpo passa de 120 rpm em ~2.2 s.
+// 60 rpm, o corpo cruza 120 rpm em ~2.2 s; com a confirmação de 0.5 s, o
+// motor desliga em ~2.7 s.
 const float    OMEGA_ABORT       = 12.566f;   // [rad/s] 120 rpm (2x a rotação inicial)
 const uint16_t OVERSPEED_SAMPLES = 50;        // 0.5 s
 

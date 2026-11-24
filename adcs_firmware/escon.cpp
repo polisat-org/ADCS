@@ -2,8 +2,10 @@
 #include "escon.h"
 #include "config.h"
 
-// Duty em contagens de 8 bits (analogWrite). 10 % -> 26, 90 % -> 230: 204
-// passos de ~9.8 mA (0.058 mN·m) cada.
+// Duty em contagens de 8 bits (analogWrite). 25 counts = 9,8 % e 229 counts =
+// 89,8 %. O ESCON satura duty fora de 10–90 % para 10 %/90 % (não é erro; só
+// acende "PWM Input Limitation"), então 25 vira 0 A e 229 vira 2 A. São 204
+// passos de ~9,8 mA (0,058 mN·m) cada.
 static const int DUTY_ZERO = (255L * DUTY_MIN_PCT) / 100;
 static const int DUTY_FULL = (255L * DUTY_MAX_PCT) / 100;
 
@@ -51,7 +53,7 @@ void Escon::setTorque(float tauRoda) {
 }
 
 bool Escon::ready() const {
-  return digitalRead(PIN_ESCON_READY) == HIGH;
+  return digitalRead(PIN_ESCON_READY) == LOW;
 }
 
 bool Escon::readyFault() const {

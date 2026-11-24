@@ -32,8 +32,9 @@ class SunSensor {
 public:
   void begin();
 
-  // Lê os 4 LDRs (~4.5 ms, bloqueante) e acumula o vetor para a telemetria.
-  void sample();
+  // Lê os 4 LDRs (~4.5 ms, bloqueante). Se acumular=true e houver luz
+  // suficiente, acumula o vetor para a telemetria.
+  void sample(bool acumular = true);
 
   // Azimute do vetor médio desde a última chamada; zera o acumulador.
   // Retorna false (e az = ATT_INVALID) se não havia luz suficiente.

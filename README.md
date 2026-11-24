@@ -2,7 +2,7 @@
 
 Firmware do microcontrolador da placa ADCS do POLISAT (Cubedesign 2026). Ele faz duas coisas:
 
-1. **Detumbling** no eixo Z, com a roda de reação (maxon EC 20 flat + ESCON Module 24/2) e o giroscópio do MPU-9250. A lei de controle e as constantes são as do simulador (`params.m`); os valores estão copiados em `config.h`.
+1. **Detumbling** no eixo Z, com a roda de reação (maxon EC 20 flat + ESCON Module 24/2) e o giroscópio do MPU-9250. A lei de controle e as constantes estão em `config.h` (valores copiados do `params.m` do simulador, que não é versionado neste repositório).
 2. **Determinação de atitude (azimute)** a partir de uma fonte de luz, com 4 LDRs (faces FRONTAL, DIREITO, TRASEIRO e ESQUERDO).
 
 O OBC liga e desliga cada função pela UART (comandos 1–4) e recebe o azimute de volta.
@@ -29,7 +29,7 @@ Documentação de apoio: [`docs/escon_studio_config.md`](docs/escon_studio_confi
 2. **Tools → Board:** Arduino Nano. **Processor:** ATmega328P. Se o upload falhar, use *ATmega328P (Old Bootloader)*, que é o caso da maioria dos clones.
 3. **Tools → Port:** a porta COM do Nano. Clique em **Upload**.
 
-Não precisa instalar biblioteca. Tamanho atual: 15,5 kB de flash (47 %) e 719 B de RAM (35 %).
+Não precisa instalar biblioteca, mas o código usa `Wire.setWireTimeout`, que exige Arduino AVR core 1.8.x. Tamanho atual: 15,8 kB de flash (51 %) e 719 B de RAM (35 %).
 
 ## Operação (com tudo montado)
 
@@ -38,17 +38,42 @@ Não precisa instalar biblioteca. Tamanho atual: 15,5 kB de flash (47 %) e 719 B
 | Parte | Vem de |
 |---|---|
 | Nano (pino +5V), MPU-9250, LDRs | trilho de **+5 V** do conector de pilha (J1 pinos 29-30, J2 pino 26). O VIN do Nano não está ligado |
-| ESCON (+VCC, pino 4) | conector **14.8V1**, passando pelo fusível F1 e pelo TVS D1 (faixa do ESCON: 10–24 V) |
+| ESCON (+VCC, pino 4) | conector **14.8V1** (nome da rede; tensão real 13,0–13,8 V), passando pelo fusível F1 e pelo TVS D1 (faixa do ESCON: 10–24 V) |
 
 - Pode ligar o USB do Nano junto com a placa para acompanhar a depuração.
-- ⚠️ **Verificar:** na PCB, a **saída** auxiliar de +5 V do ESCON (pino 6) está ligada no mesmo trilho de +5 V da pilha. São duas fontes em paralelo. Meça o trilho com o ESCON ligado e desligado antes do teste longo.
-- O `escon_studio_config.md` foi calculado para 13,6 V. Com 14,8 V a corrente continua limitada a 2 A pela configuração do ESCON, e o limite de 12000 rpm continua protegendo contra sobrevelocidade.
+- ⚠️ **Pino 6 do ESCON:** é a saída auxiliar de +5 V (alimentação dos Halls, ≤30 mA). Deve ir **somente** ao motor (VHall); **não** ao trilho +5 V da placa. Na PCB original ele estava ligado ao trilho; essa ligação foi removida. Em uma placa nova, mantenha o pino 6 isolado.
+- O `escon_studio_config.md` usa a faixa real de **13,0–13,8 V**. Com 13,0 V a tensão permite ~1,91 A no stall (o fundo de escala de 2 A não é alcançável com a roda parada), mas o pico de operação é 1,02 A. O limite de 12000 rpm continua protegendo contra sobrevelocidade.
 
 ### Antes da primeira vez
 
 1. Configure o ESCON no ESCON Studio conforme [`docs/escon_studio_config.md`](docs/escon_studio_config.md) e faça o checklist da seção 8 com o satélite **preso**.
-2. Confirme o sentido da roda (item 4 do roteiro de testes abaixo) e ajuste `INVERT_DIR` em `config.h`, se precisar.
-3. Confirme a numeração e a calibração dos LDRs (seção *Determinação de atitude*).
+2. Deixe **AnOUT1 e AnOUT2 = No function** (passo a passo abaixo); o firmware não lê A6/A7.
+3. Configure **DigOUT4 = Ready, High active**; a checagem de Ready já vem ativa (`ESCON_READY_CHECK = true`).
+4. Faça o tuning do loop de corrente (seção *Tuning do loop de corrente*).
+5. Confirme o sentido da roda (item 4 do roteiro de testes abaixo) e ajuste `INVERT_DIR` em `config.h`, se precisar.
+6. Confirme a numeração e a calibração dos LDRs (seção *Determinação de atitude*).
+
+### Desligar as saídas analógicas (AnOUT1/AnOUT2)
+
+O firmware **não lê A6/A7**, e as saídas analógicas do ESCON podem ir de −4 a +4 V. Por isso, deixe as duas como **No function**:
+
+1. ESCON Studio → **Startup Wizard → Analog Outputs** (ou **Parameter → Analog Outputs**).
+2. **AnOUT1 → No function**.
+3. **AnOUT2 → No function**.
+4. **Download/Save** os parâmetros no ESCON.
+5. Meça **A6** e **A7** contra o GND do Nano: devem ficar em ~0 V (ou alta impedância).
+6. Opcional: corte as duas trilhas de A6/A7 (o firmware não as usa).
+
+Se precisar mantê-las ativas: resistor série de 4k7–10k + Schottky para GND (BAT54, 1N5819…). Não use diodo em série no sinal analógico. Detalhes e desenho em `docs/escon_studio_config.md` §5.
+
+### Tuning do loop de corrente
+
+O firmware usa **Current Controller**. O loop de corrente é independente da carga:
+
+- **Recomendado:** **Expert Tuning → Inner Current Control Loop**, com o eixo/rotor **travado**.
+- **Alternativa:** **Auto Tuning completo** com a roda removida (ou só o acoplador) e o eixo **livre**; ignore os ganhos de velocidade.
+- **Não faça** Auto Tuning completo com a roda montada: a inércia alta impede a oscilação e a regeneração pode causar overvoltage.
+- Não precisa retunar o loop de corrente ao recolocar a roda.
 
 ### Sequência de operação
 
@@ -109,9 +134,9 @@ As linhas CSV do detumbling são `t[s],omega[rpm],torque[mN·m]`. A "faixa ating
 | `WHO_AM_I` diferente de 0x71/0x73/0x70 | Clone com outro chip | Normalmente funciona; confira se ω responde ao girar |
 | `ERRO: calibracao recusada (em movimento ou falha I2C); bias mantido` | Satélite se mexeu durante a calibração | Deixe parado e mande `C` pelo USB (com o detumbling desligado) |
 | `ERRO: giroscopio indisponivel, detumbling bloqueado` | Recebeu `1` sem o MPU ter iniciado | Resolver o erro do MPU e reiniciar |
-| `PARADO (SOBREVELOCIDADE: ...)` | \|ω\| passou de 120 rpm por 0,5 s: o controle está acelerando o corpo | Sentido da roda invertido (`INVERT_DIR`) ou eixo do MPU invertido (`GYRO_Z_SIGN`); mude só um deles |
-| `PARADO (falha de leitura do giroscopio)` | 5 leituras I2C seguidas falharam | Mau contato ou ruído no I2C; verificar cabos e o aterramento do motor |
-| `PARADO (ESCON sinalizou erro no Ready)` | ESCON em erro (só com `ESCON_READY_CHECK = true`) | Ver o erro no ESCON Studio (LED vermelho) |
+| `detumbling PARADO (SOBREVELOCIDADE: ...)` | \|ω\| passou de 120 rpm por 0,5 s: o controle está acelerando o corpo | Sentido da roda invertido (`INVERT_DIR`) ou eixo do MPU invertido (`GYRO_Z_SIGN`); mude só um deles |
+| `detumbling PARADO (falha de leitura do giroscopio)` | 5 leituras I2C seguidas falharam | Mau contato ou ruído no I2C; verificar cabos e o aterramento do motor |
+| `detumbling PARADO (ESCON sinalizou erro no Ready)` | ESCON em erro com `ESCON_READY_CHECK = true` (padrão) | Ver o erro no ESCON Studio (LED vermelho) |
 | `ERRO: encerre o detumbling (2) antes de calibrar` | `C` enviado com o detumbling ativo | Mande `2` antes |
 | `# buscando azimute: luz insuficiente` sem parar | Luz fraca demais ou LDRs desconectados | Mande `L` e confira as tensões |
 | `# detumbling ATIVO` mas a roda não gira | ESCON sem alimentação, Enable/PWM mal ligados ou ESCON em erro | Ver os LEDs do ESCON e o checklist de `docs/escon_studio_config.md` |
@@ -121,16 +146,16 @@ As linhas CSV do detumbling são `t[s],omega[rpm],torque[mN·m]`. A "faixa ating
 
 | Constante | Quando mudar |
 |---|---|
-| `INVERT_DIR` | A roda acelera no sentido contrário ao do corpo |
-| `GYRO_Z_SIGN` | O eixo Z do MPU está montado ao contrário do eixo da roda |
+| `INVERT_DIR` | A roda acelera no sentido contrário ao do corpo (não é o `GYRO_Z_SIGN`) |
+| `GYRO_Z_SIGN` | O eixo Z do MPU está montado ao contrário do eixo da roda (não é o `INVERT_DIR`) |
 | `LDR_CAL` | Recalibração ou numeração diferente dos LDRs |
 | `LDR_GAMMA` | Depois de medir a não linearidade dos LDRs |
 | `UART_BAUD` | Tem que ser igual ao `BaudRate` do huart1 do OBC (máx. recomendado no SoftwareSerial: 38400) |
 | `AZ_TX_PERIOD_MS` | Intervalo entre envios do azimute durante a busca (padrão 1 s) |
-| `ESCON_READY_CHECK` | Depois de configurar DigOUT4 = Ready no ESCON |
+| `ESCON_READY_CHECK` | Padrão `true`; exige DigOUT4 = Ready, High active. Use `false` só se essa saída não estiver configurada |
 | `PIN_UART_TX` / `PIN_UART_RX` | O OBC não recebe nada: os rótulos Tx/Rx da PCB podem estar do ponto de vista do OBC |
 
-## Pinagem (extraída da netlist do `PCB_LASC_v1.0.kicad_pcb`)
+## Pinagem (netlist da PCB_LASC_v1.0, projeto externo a este repositório)
 
 | Nano | Rede | Destino |
 |---|---|---|
@@ -138,7 +163,7 @@ As linhas CSV do detumbling são `t[s],omega[rpm],torque[mN·m]`. A "faixa ating
 | D4 | /D2IN | ESCON pino 16 DigIN2: Enable |
 | D5 | /D3IN/D1OUT | ESCON pino 15 DigIN/OUT3: Direction |
 | D6 | /D4IN/D2OUT | ESCON pino 14 DigIN/OUT4: Ready (entrada no Nano) |
-| A6 / A7 | /AOUT2 / /AOUT1 | ESCON AnOUT2 / AnOUT1 (não usados: podem ficar negativos) |
+| A6 / A7 | /AOUT2 / /AOUT1 | ESCON AnOUT2 / AnOUT1 — **não usados**: deixar as duas saídas como **No function** no ESCON Studio (podem ir a −4 V e danificar o Nano) |
 | A4 / A5 | SDA / SCL | MPU-9250 (endereço 0x68) |
 | D12 | Rx | J1 pinos 7-8: UART **do** OBC |
 | D11 | Tx | J1 pinos 13-14: UART **para** o OBC |
@@ -149,7 +174,7 @@ As linhas CSV do detumbling são `t[s],omega[rpm],torque[mN·m]`. A "faixa ating
 | D7, D8, D10 | HC-05 RX/TX, /DISABLE | sem conexão na placa |
 | D0 / D1 | — | livres: ficam para o USB (depuração) |
 
-> A versão antiga de `escon_studio_config.md` na pasta do simulador cita **D7/D8/D9**. A PCB usa **D3/D4/D5**; a cópia em `docs/` já está corrigida.
+> A pinagem desta tabela é a da PCB_LASC_v1.0. Versões antigas do doc citavam **D7/D8/D9**; a PCB usa **D3/D4/D5**.
 
 ## Protocolo com o OBC
 
@@ -181,9 +206,9 @@ UART em **9600 8N1** (`UART_BAUD`), pelo SoftwareSerial em D12 (RX) / D11 (TX).
 
 O detumbling não tem timeout: só termina pelo comando 2. O motor é desligado automaticamente em três casos:
 
-- **Sobrevelocidade:** |ω| > 120 rpm por 0,5 s. Com o sentido certo, o controle só tira rotação do corpo, então isso só acontece com a roda ou o giroscópio invertidos. Simulado: partindo de 60 rpm com o sentido invertido, desliga em 2,8 s.
+- **Sobrevelocidade:** |ω| > 120 rpm por 0,5 s. Com o sentido certo, o controle só tira rotação do corpo, então isso só acontece com a roda ou o giroscópio invertidos. Simulado: partindo de 60 rpm com o sentido invertido, o corpo cruza 120 rpm em ~2,2 s e o motor desliga após os 0,5 s de confirmação (~2,7 s).
 - **Giroscópio:** 5 leituras seguidas com falha.
-- **ESCON:** Ready baixo (só com `ESCON_READY_CHECK = true`).
+- **ESCON:** Ready baixo (`ESCON_READY_CHECK = true`, padrão).
 
 Nesses casos o ADCS também não avisa o OBC (o protocolo não prevê); a causa aparece só no USB.
 
@@ -218,6 +243,6 @@ az  = atan2(n_DIREITO − n_ESQUERDO, n_FRONTAL − n_TRASEIRO)    → [0, 360)�
 1. **Sem motor:** grave, abra o monitor serial e confira `WHO_AM_I` (0x71, 0x73 ou 0x70) e o bias.
 2. **LDRs:** aponte a lanterna para cada face e mande `L`. A face iluminada deve ter o maior `n`, e o `az` deve dar ~0/90/180/270°.
 3. **Varredura de azimute:** gire a fonte de 0° a 360° em passos de 15° e registre o erro. Ele vai para o relatório (HLR-ADCS-03) e, se preciso, para o ajuste de `LDR_GAMMA` ou uma tabela de correção.
-4. **ESCON:** siga o checklist da seção 8 de [`docs/escon_studio_config.md`](docs/escon_studio_config.md), com o satélite **preso**. Gire o corpo à mão no sentido +Z do giroscópio e mande `1`: a roda tem que acelerar **no mesmo sentido** do corpo. Se acelerar ao contrário, mude `INVERT_DIR` (ou `GYRO_Z_SIGN`, se o eixo do MPU estiver invertido), nunca os dois.
+4. **ESCON:** siga o checklist da seção 8 de [`docs/escon_studio_config.md`](docs/escon_studio_config.md), com o satélite **preso**. Gire o corpo à mão no sentido +Z do giroscópio e mande `1`: a roda tem que acelerar **no mesmo sentido** do corpo. Se a roda acelerar ao contrário, mude `INVERT_DIR` (ou a polaridade da Direction no ESCON, nunca os dois). Se o sinal de ω estiver invertido, mude `GYRO_Z_SIGN` (ou remonte o MPU), nunca os dois.
 5. **Detumbling no mancal:** a 60 rpm, mande `1` (e `2` para encerrar). A simulação da lei discreta (com quantização do PWM) prevê cruzar 5 rpm em **~7,9 s**, com pico de 1,02 A.
 6. **UART:** ligue o OBC e confira no USB do Nano as linhas `# OBC: comando N` e, com o comando 3, o ângulo chegando no OBC. Com um conversor USB-serial em J1 é preciso um terminal que envie bytes binários (ex.: RealTerm), porque digitar `1` no PuTTY envia o ASCII 0x31, que o ADCS ignora.

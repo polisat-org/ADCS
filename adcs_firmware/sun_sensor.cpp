@@ -3,7 +3,8 @@
 #include "config.h"
 
 void SunSensor::begin() {
-  analogReference(DEFAULT);
+  // Referência analógica: a padrão do Nano (5 V). Não chamar
+  // analogReference(DEFAULT): o nome DEFAULT não existe em todos os cores.
   pinMode(PIN_LDR_BANK_A, OUTPUT);
   digitalWrite(PIN_LDR_BANK_A, LOW);
   pinMode(PIN_LDR_BANK_B, OUTPUT);
@@ -12,7 +13,7 @@ void SunSensor::begin() {
 
 float SunSensor::readVolts(uint8_t pino) {
   analogRead(pino);   // descarta: a 1ª conversão após trocar o mux é imprecisa
-  uint16_t soma = 0;
+  uint32_t soma = 0;
   for (uint8_t i = 0; i < LDR_OVERSAMPLE; i++) soma += analogRead(pino);
   return (soma / (float)LDR_OVERSAMPLE) * (ADC_VREF / 1023.0f);
 }
@@ -24,7 +25,7 @@ float SunSensor::toDeg360(float yy, float xx) {
   return a;
 }
 
-void SunSensor::sample() {
+void SunSensor::sample(bool acumular) {
   // Banco A (Q1): FRONTAL em A0, DIREITO em A1. O banco B fica desligado,
   // senão os LDRs do mesmo nó analógico se somariam.
   digitalWrite(PIN_LDR_BANK_B, LOW);
@@ -51,9 +52,11 @@ void SunSensor::sample() {
   ok = (sqrt(vx * vx + vy * vy) >= LDR_MIN_SIGNAL);
   az = ok ? toDeg360(vy, vx) : ATT_INVALID;
 
-  somaX += vx;
-  somaY += vy;
-  nSomas++;
+  if (acumular && ok) {
+    somaX += vx;
+    somaY += vy;
+    nSomas++;
+  }
 }
 
 bool SunSensor::takeAverage(float &azDeg) {
