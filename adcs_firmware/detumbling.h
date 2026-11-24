@@ -42,6 +42,8 @@ public:
   uint32_t elapsedMs() const { return ativo ? millis() - inicioMs : 0; }
   // Tempo até entrar na faixa na última manobra (0 = ainda não entrou).
   uint32_t timeToRangeMs() const { return tFaixaMs; }
+  // Por que o motor parou sozinho na última manobra (FALHA_* de config.h; 0 = nenhuma/por comando).
+  uint8_t falha() const { return gyroOk ? codigoFalha : FALHA_SEM_GIROSCOPIO; }
 
 private:
   GyroMPU9250 *gyro = nullptr;
@@ -58,4 +60,5 @@ private:
   uint8_t falhasSeguidas = 0;
   uint32_t inicioMs = 0;
   uint32_t tFaixaMs = 0;
+  uint8_t codigoFalha = 0;
 };

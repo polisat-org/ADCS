@@ -183,6 +183,16 @@ const uint8_t CMD_DETUMBLING_INICIA = 1;
 const uint8_t CMD_DETUMBLING_PARA   = 2;
 const uint8_t CMD_AZIMUTE_INICIA    = 3;
 const uint8_t CMD_AZIMUTE_PARA      = 4;
+const uint8_t CMD_REINICIA          = 5;   // desliga o motor e reinicia o firmware (recuperação pelo OBC)
+
+// Estado para o OBC: "SDBF!" (D detumbling 0/1, B busca 0/1, F falha), depois de cada comando e a
+// cada ESTADO_PERIOD_MS (heartbeat: o OBC reinicia o ADCS se ficar sem resposta). Códigos de falha:
+const uint8_t FALHA_NENHUMA         = 0;
+const uint8_t FALHA_SOBREVELOCIDADE = 1;
+const uint8_t FALHA_GIROSCOPIO      = 2;
+const uint8_t FALHA_ESCON           = 3;
+const uint8_t FALHA_SEM_GIROSCOPIO  = 4;   // MPU não respondeu no boot
+const uint32_t ESTADO_PERIOD_MS     = 2000;
 
 // TEM que ser igual ao BaudRate do huart1 no OBC. O SoftwareSerial recebe
 // bem até 38400; acima disso a recepção do comando fica pouco confiável.

@@ -37,6 +37,9 @@ public:
   // Envia o azimute nos 5 caracteres do protocolo (bloqueia ~5 ms a 9600).
   void sendAzimuth(float azDeg);
 
+  // Envia o estado "SDBF!" (bloqueia ~5 ms a 9600). Não se confunde com o azimute "ddd.d".
+  void sendStatus(bool detumbling, bool busca, uint8_t falha);
+
   // "270.5", "045.3", "000.0": 0.0–359.9 arredondado a 0.1°. 'out' precisa
   // de AZ_MSG_LEN + 1 bytes (o '\0' não é transmitido).
   static void formatAzimuth(float azDeg, char *out);
